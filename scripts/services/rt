@@ -1,0 +1,112 @@
+#!/usr/bin/env perl
+# Report interesting RT log events for use with logwatch(8).  Assumes an RT
+# $LogLevel no more verbose than info (the default).
+#
+# Author: Thomas Sibley <tsibley@cpan.org>
+#
+# Copyright (c) 2013 Best Practical Solutions, LLC
+#               2014 Thomas Sibley
+#
+# This program and supporting configuration is free software; you can
+# redistribute it and/or modify it under the GNU General Public License,
+# version 2.
+use strict;
+use warnings;
+
+# Load patterns to ignore, if any
+my @ignore;
+
+if (my $ignores_file = $ENV{IGNORE_PATTERNS} || $ENV{ignore_patterns}) {
+    open my $fh, "<", $ignores_file
+        or die "Unable to open '$ignores_file': $!";
+
+    while (<$fh>) {
+        chomp;
+        next if /^\s*$/ or /^#/;
+        push @ignore, qr/$_/;
+    }
+
+    close $fh or die "Error during close: $!";
+}
+
+# Static ignores
+push @ignore, qr/WebRT: No ticket specified/;
+push @ignore, qr/<rt-.+?\@.+?> (#\d+\/\d+ - Scrip \d+|No recipients found|not sending to|sent\s+(?i:To|Cc|Bcc)|.+? is blacklisted)/;
+
+# Tally various interesting event types by matching on each line
+my (%count, @unknown);
+
+LINE: while (<>) {
+    chomp;
+    s/^\[\d+\] //;          # strip RT-added pid prefix
+    s/^.+? \d{4}\] \[/[/;   # strip $LogToFile-style timestamp
+    s/ \([^)]+?:\d+\)$//;   # strip filename:line added by RT under debug
+
+    if (/FAILED LOGIN for (.+?) from ([\d\.]+)/) {
+        $count{"failed logins"}{"_total"}++;
+        $count{"failed logins"}{$1}++;
+        $count{"failed logins"}{$2}++;
+    }
+    elsif (/WebRT: Could not load ticket/) {
+        $count{"Invalid ticket IDs"}++;
+    }
+    elsif (/successfully deleted (\d+|0E0) sessions/) {
+        $count{"Sessions purged"} += $1 if $1+0;
+    }
+    elsif (/Ticket \d+ created in queue '(.+)'/) {
+        $count{"Tickets created"}++;
+    }
+    else {
+        my $line = $_;
+        for (@ignore) {
+            next LINE if $line =~ $_;
+        }
+        push @unknown, $line;
+    }
+}
+
+# Produce stable, sorted output of events
+for my $type (sorted_keys(\%count)) {
+    my $c = $count{$type};
+
+    if (not ref $c) {
+        print ucfirst($type), " = $c\n\n";
+    }
+    elsif (ref $c eq 'HASH') {
+        my $total = delete $c->{_total}
+            or next;
+
+        print ucfirst($type), " ($total), tallied by username and source:\n";
+        for my $k (reverse sort_by_value($c)) {
+            printf "  %3d x %s\n", $c->{$k}, $k;
+        }
+        print "\n";
+    }
+}
+
+# Report unknown lines
+if (@unknown) {
+    print "Unknown lines (", scalar @unknown, "):\n";
+    my (%seen, @output);
+    for (@unknown) {
+        push @output, $_ unless $seen{$_}++;
+    }
+    printf "  %3d x %s\n", $seen{$_}, $_ for @output;
+    print "\n";
+}
+
+sub sorted_keys {
+    my $h = $_[0];
+    sort {
+        # Sort keys with non-ref values first, then by alphabetical within partitions
+        ref($h->{$a}) && ref($h->{$b}) ? $a cmp $b :
+                        !ref($h->{$a}) ?        -1 :
+                        !ref($h->{$b}) ?         1 :
+                                         $a cmp $b ;
+    }
+    keys %$h
+}
+
+sub sort_by_value {
+    sort { $_[0]->{$a} <=> $_[0]->{$b} } keys %{$_[0]}
+}
