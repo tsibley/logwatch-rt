@@ -5,7 +5,7 @@
 # Author: Thomas Sibley <tsibley@cpan.org>
 #
 # Copyright (c) 2013 Best Practical Solutions, LLC
-#               2014 Thomas Sibley
+#               2014-2015 Thomas Sibley
 #
 # This program and supporting configuration is free software; you can
 # redistribute it and/or modify it under the GNU General Public License,
@@ -32,6 +32,7 @@ if (my $ignores_file = $ENV{IGNORE_PATTERNS} || $ENV{ignore_patterns}) {
 # Static ignores
 push @ignore, qr/WebRT: No ticket specified/;
 push @ignore, qr/<rt-.+?\@.+?> (#\d+\/\d+ - Scrip \d+|No recipients found|not sending to|sent\s+(?i:To|Cc|Bcc)|.+? is blacklisted)/;
+push @ignore, qr/Using \S+ for HTML -> text conversion/;
 
 # Tally various interesting event types by matching on each line
 my (%count, @unknown);
